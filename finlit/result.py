@@ -24,6 +24,9 @@ class ExtractionResult:
     review_threshold: float = 0.85
     review_fields: list[dict] = field(default_factory=list)
 
+    # Pipeline-level warnings (e.g. sparse text, ocr fallback used)
+    warnings: list[dict] = field(default_factory=list)
+
     # Metadata
     document_path: str = ""
     schema_name: str = ""
@@ -31,7 +34,7 @@ class ExtractionResult:
 
     @property
     def needs_review(self) -> bool:
-        return len(self.review_fields) > 0
+        return len(self.review_fields) > 0 or len(self.warnings) > 0
 
     @property
     def extracted_field_count(self) -> int:

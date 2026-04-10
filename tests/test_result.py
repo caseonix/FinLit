@@ -32,3 +32,18 @@ def test_get_returns_field_value_or_default():
     assert r.get("a") == 42
     assert r.get("missing") is None
     assert r.get("missing", "fallback") == "fallback"
+
+
+def test_warnings_default_empty():
+    r = ExtractionResult(fields={"a": 1}, confidence={}, source_ref={})
+    assert r.warnings == []
+
+
+def test_needs_review_true_when_warning_present():
+    r = ExtractionResult(
+        fields={"a": 1},
+        confidence={"a": 0.99},
+        source_ref={},
+        warnings=[{"code": "sparse_document", "message": "Parsed text < 100 chars"}],
+    )
+    assert r.needs_review is True
