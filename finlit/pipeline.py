@@ -28,6 +28,10 @@ _EXTRACTOR_ALIASES = {
     "ollama": "ollama:llama3.2",
 }
 
+# Minimum number of stripped characters before we consider a parsed document
+# "sparse" (likely a scanned image with no text layer).
+SPARSE_TEXT_THRESHOLD = 100
+
 
 class DocumentPipeline:
     """Full extraction pipeline for a single document."""
@@ -40,11 +44,15 @@ class DocumentPipeline:
         audit: bool = True,
         pii_redact: bool = False,
         review_threshold: float = 0.85,
+        ocr_fallback: bool = True,
+        sparse_text_threshold: int = SPARSE_TEXT_THRESHOLD,
     ):
         self.schema = schema
         self.audit_enabled = audit
         self.pii_redact = pii_redact
         self.review_threshold = review_threshold
+        self.ocr_fallback = ocr_fallback
+        self.sparse_text_threshold = sparse_text_threshold
 
         if isinstance(extractor, BaseExtractor):
             self._extractor: BaseExtractor = extractor
@@ -55,12 +63,19 @@ class DocumentPipeline:
             self._model_name = model_str
 
         self._parser = DoclingParser()
+        self._ocr_parser: DoclingParser | None = None  # lazy-initialized
         self._pii_detector = CanadianPIIDetector()
         self._validator = FieldValidator()
+
+    def _get_ocr_parser(self) -> DoclingParser:
+        if self._ocr_parser is None:
+            self._ocr_parser = DoclingParser(ocr=True)
+        return self._ocr_parser
 
     def run(self, path: str | Path) -> ExtractionResult:
         run_id = str(uuid.uuid4())
         audit = AuditLog(run_id=run_id)
+        warnings: list[dict] = []
 
         path = Path(path)
 
@@ -73,6 +88,45 @@ class DocumentPipeline:
             sha256=parsed.metadata["sha256"],
             num_pages=parsed.metadata.get("num_pages"),
         )
+
+        # Step 1b: if text is sparse (likely a scanned image PDF),
+        # transparently retry with Docling's OCR pipeline.
+        stripped_len = len(parsed.full_text.strip())
+        if stripped_len < self.sparse_text_threshold and self.ocr_fallback:
+            audit.log(
+                "ocr_fallback_triggered",
+                reason="sparse_text",
+                initial_chars=stripped_len,
+            )
+            parsed = self._get_ocr_parser().parse(path)
+            audit.log(
+                "document_loaded_ocr",
+                file=parsed.metadata["filename"],
+                sha256=parsed.metadata["sha256"],
+                num_pages=parsed.metadata.get("num_pages"),
+                chars=len(parsed.full_text.strip()),
+            )
+
+        # Step 1c: if still sparse, record a document-level warning
+        # so the caller can see this result needs manual review.
+        final_stripped_len = len(parsed.full_text.strip())
+        if final_stripped_len < self.sparse_text_threshold:
+            warnings.append(
+                {
+                    "code": "sparse_document",
+                    "message": (
+                        f"Parsed text is only {final_stripped_len} chars; "
+                        "the document may be a scanned image with no text "
+                        "layer that OCR could not recover."
+                    ),
+                    "chars": final_stripped_len,
+                }
+            )
+            audit.log(
+                "sparse_document_warning",
+                chars=final_stripped_len,
+                threshold=self.sparse_text_threshold,
+            )
 
         # Step 2: PII scan
         pii_entities: list[dict] = []
@@ -131,7 +185,7 @@ class DocumentPipeline:
             "pipeline_complete",
             fields_total=len(self.schema.fields),
             fields_extracted=sum(1 for v in validated_fields.values() if v is not None),
-            needs_review=len(review_fields) > 0,
+            needs_review=len(review_fields) > 0 or len(warnings) > 0,
         )
         audit.finalize()
 
@@ -142,6 +196,7 @@ class DocumentPipeline:
             pii_entities=pii_entities,
             audit_log=audit.to_dict(),
             review_fields=review_fields,
+            warnings=warnings,
             review_threshold=self.review_threshold,
             document_path=str(path),
             schema_name=self.schema.name,
