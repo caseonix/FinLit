@@ -26,10 +26,34 @@ class ParsedDocument:
 
 
 class DoclingParser:
-    """Local-only document parser built on Docling."""
+    """Local-only document parser built on Docling.
 
-    def __init__(self) -> None:
-        self._converter = DocumentConverter()
+    Parameters
+    ----------
+    ocr:
+        When True, enables Docling's OCR pipeline for PDF inputs. Required
+        for scanned / image-only PDFs that have no embedded text layer.
+        Default is False (faster, works for native text PDFs).
+    """
+
+    def __init__(self, ocr: bool = False) -> None:
+        self.ocr = ocr
+        if ocr:
+            from docling.datamodel.base_models import InputFormat
+            from docling.datamodel.pipeline_options import PdfPipelineOptions
+            from docling.document_converter import PdfFormatOption
+
+            pipeline_options = PdfPipelineOptions()
+            pipeline_options.do_ocr = True
+            self._converter = DocumentConverter(
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(
+                        pipeline_options=pipeline_options
+                    )
+                }
+            )
+        else:
+            self._converter = DocumentConverter()
 
     def parse(self, path: str | Path) -> ParsedDocument:
         path = Path(path)
