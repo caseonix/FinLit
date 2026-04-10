@@ -1,0 +1,59 @@
+name: bank_statement
+version: "1.0"
+document_type: "Canadian Bank Statement"
+description: >
+  Generic Canadian bank statement header and summary fields.
+  Transaction line items are not extracted in this schema.
+
+fields:
+  - name: institution_name
+    dtype: str
+    required: true
+    description: "Name of the financial institution"
+
+  - name: account_holder_name
+    dtype: str
+    required: true
+    pii: true
+    description: "Full legal name of the account holder"
+
+  - name: account_number_masked
+    dtype: str
+    required: true
+    pii: true
+    description: "Account number as printed (often partially masked)"
+
+  - name: statement_period_start
+    dtype: str
+    required: true
+    description: "First date in YYYY-MM-DD of the statement period"
+
+  - name: statement_period_end
+    dtype: str
+    required: true
+    description: "Last date in YYYY-MM-DD of the statement period"
+
+  - name: opening_balance
+    dtype: float
+    required: true
+    description: "Opening balance of the statement period"
+
+  - name: closing_balance
+    dtype: float
+    required: true
+    description: "Closing balance of the statement period"
+
+  - name: total_deposits
+    dtype: float
+    required: false
+    description: "Sum of deposits in the statement period"
+
+  - name: total_withdrawals
+    dtype: float
+    required: false
+    description: "Sum of withdrawals in the statement period"
+
+  - name: currency_code
+    dtype: str
+    required: false
+    description: "Currency code (defaults to CAD)"

@@ -1,0 +1,79 @@
+name: cra_t4
+version: "2024"
+document_type: "CRA T4 Statement of Remuneration Paid"
+description: >
+  Canadian T4 slip issued by employers to report employment income,
+  CPP contributions, EI premiums, and income tax deducted.
+
+fields:
+  - name: employer_name
+    dtype: str
+    required: true
+    description: "Name of the employer shown on the T4"
+
+  - name: employee_sin
+    dtype: str
+    required: true
+    pii: true
+    regex: '^\d{3}-\d{3}-\d{3}$'
+    description: "Employee's Social Insurance Number"
+
+  - name: tax_year
+    dtype: int
+    required: true
+    description: "Tax year the T4 covers"
+
+  - name: box_14_employment_income
+    dtype: float
+    required: true
+    description: "Box 14: Total employment income before deductions"
+
+  - name: box_16_cpp_contributions
+    dtype: float
+    required: false
+    description: "Box 16: Employee CPP contributions"
+
+  - name: box_18_ei_premiums
+    dtype: float
+    required: false
+    description: "Box 18: Employee EI premiums"
+
+  - name: box_22_income_tax_deducted
+    dtype: float
+    required: true
+    description: "Box 22: Total income tax deducted"
+
+  - name: box_24_ei_insurable_earnings
+    dtype: float
+    required: false
+    description: "Box 24: EI insurable earnings"
+
+  - name: box_26_cpp_pensionable_earnings
+    dtype: float
+    required: false
+    description: "Box 26: CPP pensionable earnings"
+
+  - name: box_44_union_dues
+    dtype: float
+    required: false
+    description: "Box 44: Union dues paid"
+
+  - name: box_46_charitable_donations
+    dtype: float
+    required: false
+    description: "Box 46: Charitable donations"
+
+  - name: box_50_rpp_or_dpsp_registration
+    dtype: str
+    required: false
+    description: "Box 50: RPP or DPSP registration number"
+
+  - name: box_52_pension_adjustment
+    dtype: float
+    required: false
+    description: "Box 52: Pension adjustment"
+
+  - name: province_of_employment
+    dtype: str
+    required: false
+    description: "Province or territory of employment (2-letter code, e.g. ON)"

@@ -1,0 +1,59 @@
+name: cra_t5
+version: "2024"
+document_type: "CRA T5 Statement of Investment Income"
+description: >
+  Canadian T5 slip issued by financial institutions to report
+  investment income including dividends and interest.
+
+fields:
+  - name: payer_name
+    dtype: str
+    required: true
+    description: "Name of the financial institution issuing the T5"
+
+  - name: recipient_sin
+    dtype: str
+    required: true
+    pii: true
+    regex: '^\d{3}-\d{3}-\d{3}$'
+    description: "Recipient's Social Insurance Number"
+
+  - name: tax_year
+    dtype: int
+    required: true
+    description: "Tax year the T5 covers"
+
+  - name: box_10_actual_amount_of_eligible_dividends
+    dtype: float
+    required: false
+    description: "Box 10: Actual amount of eligible dividends"
+
+  - name: box_11_taxable_amount_of_eligible_dividends
+    dtype: float
+    required: false
+    description: "Box 11: Taxable amount of eligible dividends (138% of box 10)"
+
+  - name: box_12_dividend_tax_credit_eligible
+    dtype: float
+    required: false
+    description: "Box 12: Dividend tax credit for eligible dividends"
+
+  - name: box_13_interest_from_canadian_sources
+    dtype: float
+    required: false
+    description: "Box 13: Interest from Canadian sources"
+
+  - name: box_14_other_income_from_canadian_sources
+    dtype: float
+    required: false
+    description: "Box 14: Other income from Canadian sources"
+
+  - name: box_24_actual_amount_of_ordinary_dividends
+    dtype: float
+    required: false
+    description: "Box 24: Actual amount of ordinary dividends"
+
+  - name: box_25_taxable_amount_ordinary_dividends
+    dtype: float
+    required: false
+    description: "Box 25: Taxable amount of ordinary dividends (115% of box 24)"

@@ -1,0 +1,53 @@
+name: cra_nr4
+version: "2024"
+document_type: "CRA NR4 Statement of Amounts Paid or Credited to Non-Residents of Canada"
+description: >
+  Canadian NR4 slip for amounts paid or credited to non-residents of Canada,
+  including dividends, interest, royalties, and pension benefits.
+
+fields:
+  - name: payer_name
+    dtype: str
+    required: true
+    description: "Name of the Canadian payer"
+
+  - name: recipient_name
+    dtype: str
+    required: true
+    pii: true
+    description: "Non-resident recipient's name"
+
+  - name: recipient_country_code
+    dtype: str
+    required: true
+    description: "ISO country code of the non-resident recipient"
+
+  - name: tax_year
+    dtype: int
+    required: true
+    description: "Tax year the NR4 covers"
+
+  - name: income_code
+    dtype: str
+    required: true
+    description: "Income code (e.g. 06 = dividends, 61 = interest)"
+
+  - name: currency_code
+    dtype: str
+    required: true
+    description: "Currency code (CAD, USD, etc.)"
+
+  - name: gross_income
+    dtype: float
+    required: true
+    description: "Box 16: Gross income paid or credited"
+
+  - name: non_resident_tax_withheld
+    dtype: float
+    required: false
+    description: "Box 17: Non-resident tax withheld"
+
+  - name: exemption_code
+    dtype: str
+    required: false
+    description: "Exemption code (if any)"

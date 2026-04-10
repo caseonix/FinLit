@@ -1,0 +1,54 @@
+name: cra_t4a
+version: "2024"
+document_type: "CRA T4A Statement of Pension, Retirement, Annuity, and Other Income"
+description: >
+  Canadian T4A slip for pension, retirement, annuity, self-employed
+  commissions, scholarships, and other income.
+
+fields:
+  - name: payer_name
+    dtype: str
+    required: true
+    description: "Name of the payer issuing the T4A"
+
+  - name: recipient_sin
+    dtype: str
+    required: true
+    pii: true
+    regex: '^\d{3}-\d{3}-\d{3}$'
+    description: "Recipient's Social Insurance Number"
+
+  - name: tax_year
+    dtype: int
+    required: true
+    description: "Tax year the T4A covers"
+
+  - name: box_016_pension_or_superannuation
+    dtype: float
+    required: false
+    description: "Box 016: Pension or superannuation"
+
+  - name: box_018_lump_sum_payments
+    dtype: float
+    required: false
+    description: "Box 018: Lump-sum payments"
+
+  - name: box_020_self_employed_commissions
+    dtype: float
+    required: false
+    description: "Box 020: Self-employed commissions"
+
+  - name: box_022_income_tax_deducted
+    dtype: float
+    required: false
+    description: "Box 022: Income tax deducted"
+
+  - name: box_048_fees_for_services
+    dtype: float
+    required: false
+    description: "Box 048: Fees for services"
+
+  - name: box_105_scholarships_bursaries
+    dtype: float
+    required: false
+    description: "Box 105: Scholarships, fellowships, bursaries, study grants"
