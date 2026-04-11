@@ -31,6 +31,7 @@ class ExtractionResult:
     document_path: str = ""
     schema_name: str = ""
     extractor_model: str = ""
+    extraction_path: str = "text"  # "text" or "vision"
 
     @property
     def needs_review(self) -> bool:

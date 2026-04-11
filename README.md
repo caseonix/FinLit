@@ -111,6 +111,55 @@ result = pipeline.run("t4.pdf")
 # No API keys. No external calls.
 ```
 
+### Use vision extraction for scanned PDFs and form layouts
+
+Text extraction fails in two cases: image-only PDFs with no text layer, and form-heavy documents (tax slips, invoices) where 2D column alignment carries meaning. For both, FinLit v0.3 ships an opt-in vision fallback that sends rendered page images to any multimodal LLM.
+
+```python
+from finlit import DocumentPipeline, VisionExtractor, schemas
+
+pipeline = DocumentPipeline(
+    schema=schemas.CRA_T5,
+    extractor="claude",                                    # text path (cheap, fast)
+    vision_extractor=VisionExtractor(),                    # vision fallback (accurate)
+)
+result = pipeline.run("t5_scanned.pdf")
+print(result.extraction_path)   # → "text" or "vision"
+```
+
+By default the vision extractor runs only when the text result has `needs_review=True`. Pass a custom callback for finer control:
+
+```python
+pipeline = DocumentPipeline(
+    schema=schemas.CRA_T5,
+    extractor="claude",
+    vision_extractor=VisionExtractor(model="openai:gpt-4o"),
+    vision_fallback_when=lambda r: any(c < 0.80 for c in r.confidence.values()),
+)
+```
+
+### Running fully locally with open-source vision models
+
+Vision extraction is model-agnostic. Any multimodal model pydantic-ai supports works — including fully-local open-source models via Ollama. No API keys, no external network, suitable for air-gapped deployments.
+
+```python
+pipeline = DocumentPipeline(
+    schema=schemas.CRA_T5,
+    extractor="ollama:llama3.2",
+    vision_extractor=VisionExtractor(model="ollama:qwen2.5vl:7b"),
+)
+```
+
+Tested open-source vision models:
+
+| Model | Size | Ollama tag | Notes |
+|---|---|---|---|
+| Qwen2.5-VL | 7B | `ollama:qwen2.5vl:7b` | Strongest on form/document tasks |
+| Llama 3.2 Vision | 11B | `ollama:llama3.2-vision` | General-purpose, Meta |
+| MiniCPM-V | 8B | `ollama:minicpm-v` | Fast, OpenBMB |
+
+Any pydantic-ai–compatible multimodal model will work — these are the ones that have been verified against CRA slips.
+
 ### Custom schema for your own documents
 
 ```python
@@ -203,14 +252,29 @@ DocumentPipeline(schema=schemas.CRA_T4, extractor="openai", model="gpt-4o")
 # Fully local — no external calls
 DocumentPipeline(schema=schemas.CRA_T4, extractor="ollama", model="llama3.2")
 
+# Vision fallback (any multimodal model)
+from finlit import VisionExtractor
+DocumentPipeline(
+    schema=schemas.CRA_T4,
+    extractor="claude",
+    vision_extractor=VisionExtractor(model="ollama:qwen2.5vl:7b"),
+)
+
 # Your own
 from finlit.extractors import BaseExtractor
+from finlit import BaseVisionExtractor
 
-class MyExtractor(BaseExtractor):
-    def extract(self, text, schema):
-        ...
+class MyTextExtractor(BaseExtractor):
+    def extract(self, text, schema): ...
 
-DocumentPipeline(schema=schemas.CRA_T4, extractor=MyExtractor())
+class MyVisionExtractor(BaseVisionExtractor):
+    def extract(self, images, schema, text=""): ...
+
+DocumentPipeline(
+    schema=schemas.CRA_T4,
+    extractor=MyTextExtractor(),
+    vision_extractor=MyVisionExtractor(),
+)
 ```
 
 ---
@@ -319,6 +383,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup.
 - [x] Source traceability and audit log
 - [x] PIPEDA PII detection — SIN, CRA BNs, postal codes
 - [x] CLI
+- [x] OCR auto-fallback for image-only PDFs (v0.2)
+- [x] Document-level warnings for sparse and missing-required-field results (v0.2)
+- [x] Vision extraction fallback — Claude, OpenAI, Gemini, or local OSS via Ollama (v0.3)
 - [ ] SEDAR filing schemas (MD&A, AIF, financial statements)
 - [ ] Bank statement schemas (RBC, TD, Scotiabank, BMO, CIBC)
 - [ ] Accuracy benchmarks per schema

@@ -282,3 +282,325 @@ def test_batch_result_export_csv(
     assert "document" in header_line
     assert "employer_name" in header_line
     assert "box_14_employment_income" in header_line
+
+
+# ---------------- Vision fallback integration tests (v0.3) ----------------
+
+from tests.conftest import StubVisionExtractor
+
+
+def test_vision_fallback_fires_when_callback_returns_true(
+    monkeypatch, synthetic_parsed_document, tmp_path
+):
+    """Text extractor returns all-None (needs_review=True). Default callback
+    fires vision. Final result is the vision result."""
+    _patch_parser(monkeypatch, synthetic_parsed_document)
+
+    # Stub render_pages so we don't rasterize anything
+    monkeypatch.setattr(
+        "finlit.pipeline.render_pages",
+        lambda path, dpi=200: [b"fakepng1"],
+    )
+
+    fake = tmp_path / "blank_t4.pdf"
+    fake.write_bytes(b"x")
+
+    empty_text = StubExtractor(
+        fields={name: None for name in schemas.CRA_T4.field_names()},
+        confidence={name: 0.99 for name in schemas.CRA_T4.field_names()},
+    )
+    vision = StubVisionExtractor(
+        fields={
+            "employer_name": "Acme Corp",
+            "employee_sin": "123-456-789",
+            "tax_year": 2024,
+            "box_14_employment_income": 87500.0,
+            "box_22_income_tax_deducted": 15200.0,
+        },
+        confidence={
+            "employer_name": 0.98,
+            "employee_sin": 0.99,
+            "tax_year": 0.99,
+            "box_14_employment_income": 0.97,
+            "box_22_income_tax_deducted": 0.96,
+        },
+    )
+
+    pipeline = DocumentPipeline(
+        schema=schemas.CRA_T4,
+        extractor=empty_text,
+        vision_extractor=vision,
+    )
+    result = pipeline.run(fake)
+
+    assert vision.call_count == 1
+    assert result.extraction_path == "vision"
+    assert result.fields["employer_name"] == "Acme Corp"
+    assert result.fields["box_14_employment_income"] == 87500.0
+    events = [e["event"] for e in result.audit_log]
+    assert "vision_fallback_triggered" in events
+    assert "vision_extraction_complete" in events
+
+
+def test_vision_fallback_skipped_when_callback_returns_false(
+    monkeypatch, synthetic_parsed_document, high_confidence_t4_extractor, tmp_path
+):
+    """Text path produces a clean result (needs_review=False). Default
+    callback returns False. Vision must NOT be called."""
+    _patch_parser(monkeypatch, synthetic_parsed_document)
+    fake = tmp_path / "clean.pdf"
+    fake.write_bytes(b"x")
+
+    vision = StubVisionExtractor(fields={}, confidence={})
+    pipeline = DocumentPipeline(
+        schema=schemas.CRA_T4,
+        extractor=high_confidence_t4_extractor,
+        vision_extractor=vision,
+    )
+    result = pipeline.run(fake)
+
+    assert vision.call_count == 0
+    assert result.extraction_path == "text"
+    assert result.needs_review is False
+
+
+def test_vision_fallback_skipped_when_vision_extractor_not_provided(
+    monkeypatch, synthetic_parsed_document, tmp_path
+):
+    """When vision_extractor is None, no vision audit events appear even
+    if the text result has needs_review=True."""
+    _patch_parser(monkeypatch, synthetic_parsed_document)
+    fake = tmp_path / "blank.pdf"
+    fake.write_bytes(b"x")
+
+    empty = StubExtractor(
+        fields={name: None for name in schemas.CRA_T4.field_names()},
+        confidence={name: 0.99 for name in schemas.CRA_T4.field_names()},
+    )
+    pipeline = DocumentPipeline(schema=schemas.CRA_T4, extractor=empty)
+    result = pipeline.run(fake)
+
+    assert result.extraction_path == "text"
+    events = [e["event"] for e in result.audit_log]
+    assert "vision_fallback_triggered" not in events
+
+
+def test_vision_fallback_custom_callback_overrides_default(
+    monkeypatch, synthetic_parsed_document, high_confidence_t4_extractor, tmp_path
+):
+    """A custom callback can force vision to run even on a clean text result."""
+    _patch_parser(monkeypatch, synthetic_parsed_document)
+    monkeypatch.setattr(
+        "finlit.pipeline.render_pages",
+        lambda path, dpi=200: [b"fakepng"],
+    )
+    fake = tmp_path / "doc.pdf"
+    fake.write_bytes(b"x")
+
+    vision = StubVisionExtractor(
+        fields={"employer_name": "Vision Wins Co", "employee_sin": None,
+                "tax_year": 2024, "box_14_employment_income": 99999.0,
+                "box_22_income_tax_deducted": 5000.0},
+        confidence={"employer_name": 0.9, "employee_sin": 0.0,
+                    "tax_year": 0.9, "box_14_employment_income": 0.9,
+                    "box_22_income_tax_deducted": 0.9},
+    )
+
+    pipeline = DocumentPipeline(
+        schema=schemas.CRA_T4,
+        extractor=high_confidence_t4_extractor,
+        vision_extractor=vision,
+        vision_fallback_when=lambda r: True,  # always
+    )
+    result = pipeline.run(fake)
+
+    assert vision.call_count == 1
+    assert result.extraction_path == "vision"
+    assert result.fields["employer_name"] == "Vision Wins Co"
+
+
+def test_vision_render_failure_falls_back_to_text_result(
+    monkeypatch, synthetic_parsed_document, high_confidence_t4_extractor, tmp_path
+):
+    """If render_pages raises, we return the text result with a vision_fallback_failed
+    warning and an audit event."""
+    _patch_parser(monkeypatch, synthetic_parsed_document)
+
+    def _boom(path, dpi=200):
+        raise RuntimeError("corrupted pdf")
+
+    monkeypatch.setattr("finlit.pipeline.render_pages", _boom)
+    fake = tmp_path / "bad.pdf"
+    fake.write_bytes(b"x")
+
+    vision = StubVisionExtractor(fields={}, confidence={})
+    pipeline = DocumentPipeline(
+        schema=schemas.CRA_T4,
+        extractor=high_confidence_t4_extractor,
+        vision_extractor=vision,
+        vision_fallback_when=lambda r: True,  # force vision
+    )
+    result = pipeline.run(fake)
+
+    assert vision.call_count == 0  # never got past render
+    assert result.extraction_path == "text"
+    warning_codes = {w["code"] for w in result.warnings}
+    assert "vision_fallback_failed" in warning_codes
+    matching = [w for w in result.warnings if w["code"] == "vision_fallback_failed"]
+    assert matching[0]["reason"] == "render"
+    events = [e["event"] for e in result.audit_log]
+    assert "vision_render_failed" in events
+
+
+def test_vision_extraction_failure_falls_back_to_text_result(
+    monkeypatch, synthetic_parsed_document, high_confidence_t4_extractor, tmp_path
+):
+    """If the vision extractor raises, we return the text result with a
+    vision_fallback_failed warning and an audit event."""
+    _patch_parser(monkeypatch, synthetic_parsed_document)
+    monkeypatch.setattr(
+        "finlit.pipeline.render_pages",
+        lambda path, dpi=200: [b"fakepng"],
+    )
+    fake = tmp_path / "doc.pdf"
+    fake.write_bytes(b"x")
+
+    vision = StubVisionExtractor(
+        fields={}, confidence={}, raises=RuntimeError("api down"),
+    )
+    pipeline = DocumentPipeline(
+        schema=schemas.CRA_T4,
+        extractor=high_confidence_t4_extractor,
+        vision_extractor=vision,
+        vision_fallback_when=lambda r: True,
+    )
+    result = pipeline.run(fake)
+
+    assert vision.call_count == 1
+    assert result.extraction_path == "text"
+    warning_codes = {w["code"] for w in result.warnings}
+    assert "vision_fallback_failed" in warning_codes
+    matching = [w for w in result.warnings if w["code"] == "vision_fallback_failed"]
+    assert matching[0]["reason"] == "extraction"
+    events = [e["event"] for e in result.audit_log]
+    assert "vision_extraction_failed" in events
+
+
+def test_vision_callback_exception_falls_back_to_text_result(
+    monkeypatch, synthetic_parsed_document, high_confidence_t4_extractor, tmp_path
+):
+    """A callback that raises must not crash the pipeline."""
+    _patch_parser(monkeypatch, synthetic_parsed_document)
+    fake = tmp_path / "doc.pdf"
+    fake.write_bytes(b"x")
+
+    def _bad_callback(result):
+        raise ValueError("buggy callback")
+
+    vision = StubVisionExtractor(fields={}, confidence={})
+    pipeline = DocumentPipeline(
+        schema=schemas.CRA_T4,
+        extractor=high_confidence_t4_extractor,
+        vision_extractor=vision,
+        vision_fallback_when=_bad_callback,
+    )
+    result = pipeline.run(fake)
+
+    assert vision.call_count == 0
+    assert result.extraction_path == "text"
+    warning_codes = {w["code"] for w in result.warnings}
+    assert "vision_fallback_failed" in warning_codes
+    matching = [w for w in result.warnings if w["code"] == "vision_fallback_failed"]
+    assert matching[0]["reason"] == "callback"
+
+
+def test_vision_result_replaces_text_result_fully(
+    monkeypatch, synthetic_parsed_document, tmp_path
+):
+    """When vision runs successfully, its fields replace the text result
+    completely — no merging."""
+    _patch_parser(monkeypatch, synthetic_parsed_document)
+    monkeypatch.setattr(
+        "finlit.pipeline.render_pages",
+        lambda path, dpi=200: [b"fakepng"],
+    )
+    fake = tmp_path / "doc.pdf"
+    fake.write_bytes(b"x")
+
+    text = StubExtractor(
+        fields={"employer_name": "WRONG", "employee_sin": "111-111-111",
+                "tax_year": 2023, "box_14_employment_income": 1.0,
+                "box_22_income_tax_deducted": 2.0},
+        confidence={"employer_name": 0.5, "employee_sin": 0.5,
+                    "tax_year": 0.5, "box_14_employment_income": 0.5,
+                    "box_22_income_tax_deducted": 0.5},
+    )
+    vision = StubVisionExtractor(
+        fields={"employer_name": "CORRECT", "employee_sin": "999-999-999",
+                "tax_year": 2024, "box_14_employment_income": 87500.0,
+                "box_22_income_tax_deducted": 15200.0},
+        confidence={"employer_name": 0.99, "employee_sin": 0.99,
+                    "tax_year": 0.99, "box_14_employment_income": 0.99,
+                    "box_22_income_tax_deducted": 0.99},
+    )
+
+    pipeline = DocumentPipeline(
+        schema=schemas.CRA_T4,
+        extractor=text,
+        vision_extractor=vision,
+        # Text result has review_fields (confidence < 0.85) so default fires
+    )
+    result = pipeline.run(fake)
+
+    assert result.extraction_path == "vision"
+    assert result.fields["employer_name"] == "CORRECT"
+    assert result.fields["employee_sin"] == "999-999-999"
+    assert result.fields["box_14_employment_income"] == 87500.0
+
+
+def test_vision_audit_trail_complete(
+    monkeypatch, synthetic_parsed_document, tmp_path
+):
+    """A successful vision run must log the full audit event sequence in order."""
+    _patch_parser(monkeypatch, synthetic_parsed_document)
+    monkeypatch.setattr(
+        "finlit.pipeline.render_pages",
+        lambda path, dpi=200: [b"fakepng"],
+    )
+    fake = tmp_path / "doc.pdf"
+    fake.write_bytes(b"x")
+
+    empty = StubExtractor(
+        fields={name: None for name in schemas.CRA_T4.field_names()},
+        confidence={name: 0.99 for name in schemas.CRA_T4.field_names()},
+    )
+    vision = StubVisionExtractor(
+        fields={"employer_name": "Acme", "employee_sin": "123-456-789",
+                "tax_year": 2024, "box_14_employment_income": 1.0,
+                "box_22_income_tax_deducted": 1.0},
+        confidence={"employer_name": 0.99, "employee_sin": 0.99,
+                    "tax_year": 0.99, "box_14_employment_income": 0.99,
+                    "box_22_income_tax_deducted": 0.99},
+    )
+
+    pipeline = DocumentPipeline(
+        schema=schemas.CRA_T4, extractor=empty, vision_extractor=vision
+    )
+    result = pipeline.run(fake)
+
+    events = [e["event"] for e in result.audit_log]
+    required_in_order = [
+        "vision_fallback_triggered",
+        "vision_render_start",
+        "vision_render_complete",
+        "vision_extraction_start",
+        "vision_extraction_complete",
+    ]
+    # All five must appear in this exact relative order. Walk the event
+    # stream once with a single cursor so duplicates or out-of-order
+    # occurrences cannot be masked by events.index() returning the first hit.
+    it = iter(events)
+    for expected in required_in_order:
+        assert any(e == expected for e in it), (
+            f"missing or out-of-order audit event {expected!r} in {events}"
+        )

@@ -35,12 +35,17 @@ def _schema_map() -> dict:
 def extract(
     document: Path = typer.Argument(..., help="Path to document (PDF, DOCX, image)"),
     schema: str = typer.Option("cra.t4", help="Schema to use (e.g. cra.t4, cra.t5)"),
-    extractor: str = typer.Option("claude", help="Extractor: claude | openai | ollama"),
+    extractor: str = typer.Option("claude", help="Text extractor: claude | openai | ollama | <pydantic-ai model string>"),
+    vision_extractor: str = typer.Option(
+        None,
+        "--vision-extractor",
+        help="Optional vision fallback model (e.g. 'claude', 'openai:gpt-4o', 'ollama:qwen2.5vl:7b')",
+    ),
     output: str = typer.Option("table", help="Output format: table | json | jsonl"),
     review_threshold: float = typer.Option(0.85, help="Confidence threshold"),
 ):
     """Extract structured data from a Canadian financial document."""
-    from finlit import DocumentPipeline
+    from finlit import DocumentPipeline, VisionExtractor
 
     schema_map = _schema_map()
     if schema not in schema_map:
@@ -50,11 +55,22 @@ def extract(
         )
         raise typer.Exit(1)
 
+    ve = None
+    if vision_extractor:
+        # Accept shorthand aliases the same way the text extractor does.
+        model_str = {
+            "claude": "anthropic:claude-sonnet-4-6",
+            "openai": "openai:gpt-4o",
+            "ollama": "ollama:llama3.2-vision",
+        }.get(vision_extractor, vision_extractor)
+        ve = VisionExtractor(model=model_str)
+
     console.print(f"[dim]Parsing {document}...[/dim]")
     pipeline = DocumentPipeline(
         schema=schema_map[schema],
         extractor=extractor,
         review_threshold=review_threshold,
+        vision_extractor=ve,
     )
     result = pipeline.run(document)
 
@@ -87,6 +103,9 @@ def extract(
             needs_review,
         )
     console.print(table)
+
+    if result.extraction_path == "vision":
+        console.print("[cyan]ℹ Result produced by vision fallback[/cyan]")
 
     if result.needs_review:
         console.print(

@@ -10,13 +10,15 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from finlit.audit.audit_log import AuditLog
 from finlit.audit.pii import CanadianPIIDetector
 from finlit.extractors.base import BaseExtractor
+from finlit.extractors.base_vision import BaseVisionExtractor
 from finlit.extractors.pydantic_ai_extractor import PydanticAIExtractor
 from finlit.parsers.docling_parser import DoclingParser
+from finlit.parsers.image_renderer import render_pages
 from finlit.result import ExtractionResult
 from finlit.schema import Schema
 from finlit.validators.field_validator import FieldValidator
@@ -46,6 +48,8 @@ class DocumentPipeline:
         review_threshold: float = 0.85,
         ocr_fallback: bool = True,
         sparse_text_threshold: int = SPARSE_TEXT_THRESHOLD,
+        vision_extractor: BaseVisionExtractor | None = None,
+        vision_fallback_when: Callable[[Any], bool] | None = None,
     ):
         self.schema = schema
         self.audit_enabled = audit
@@ -66,6 +70,8 @@ class DocumentPipeline:
         self._ocr_parser: DoclingParser | None = None  # lazy-initialized
         self._pii_detector = CanadianPIIDetector()
         self._validator = FieldValidator()
+        self.vision_extractor = vision_extractor
+        self.vision_fallback_when = vision_fallback_when
 
     def _get_ocr_parser(self) -> DoclingParser:
         if self._ocr_parser is None:
@@ -89,8 +95,7 @@ class DocumentPipeline:
             num_pages=parsed.metadata.get("num_pages"),
         )
 
-        # Step 1b: if text is sparse (likely a scanned image PDF),
-        # transparently retry with Docling's OCR pipeline.
+        # Step 1b: OCR fallback on sparse text
         stripped_len = len(parsed.full_text.strip())
         if stripped_len < self.sparse_text_threshold and self.ocr_fallback:
             audit.log(
@@ -107,8 +112,7 @@ class DocumentPipeline:
                 chars=len(parsed.full_text.strip()),
             )
 
-        # Step 1c: if still sparse, record a document-level warning
-        # so the caller can see this result needs manual review.
+        # Step 1c: sparse warning if still unreadable
         final_stripped_len = len(parsed.full_text.strip())
         if final_stripped_len < self.sparse_text_threshold:
             warnings.append(
@@ -139,7 +143,7 @@ class DocumentPipeline:
                     entities=[e["entity_type"] for e in pii_entities],
                 )
 
-        # Step 3: LLM extraction
+        # Step 3: LLM text extraction
         audit.log(
             "extraction_start", schema=self.schema.name, model=self._model_name
         )
@@ -153,9 +157,7 @@ class DocumentPipeline:
         if validation_errors:
             audit.log("validation_errors", errors=validation_errors)
 
-        # Step 4b: if any required field is missing, emit a document-level
-        # warning so the caller sees needs_review=True even when the text
-        # wasn't sparse (e.g., a blank fillable CRA form).
+        # Step 4b: required fields missing warning
         required_field_names = {
             f.name for f in self.schema.fields if f.required
         }
@@ -181,7 +183,7 @@ class DocumentPipeline:
                 fields=missing_required,
             )
 
-        # Step 5: review queue — only flag fields with a value below threshold
+        # Step 5: review queue
         review_fields = [
             {
                 "field": fname,
@@ -209,26 +211,235 @@ class DocumentPipeline:
             for fname in self.schema.field_names()
         }
 
+        # Build the provisional text-path result
+        text_result = ExtractionResult(
+            fields=validated_fields,
+            confidence=extraction.confidence,
+            source_ref=source_ref,
+            pii_entities=pii_entities,
+            audit_log=audit.to_dict(),  # snapshot, rebuilt after finalize
+            review_fields=review_fields,
+            warnings=list(warnings),
+            review_threshold=self.review_threshold,
+            document_path=str(path),
+            schema_name=self.schema.name,
+            extractor_model=self._model_name,
+            extraction_path="text",
+        )
+
+        # Step 7: vision fallback decision
+        if self.vision_extractor is not None:
+            vision_result = self._maybe_run_vision_fallback(
+                path=path,
+                parsed_text=parsed.full_text,
+                text_result=text_result,
+                audit=audit,
+                warnings=warnings,
+                source_ref=source_ref,
+                pii_entities=pii_entities,
+            )
+            if vision_result is not None:
+                return vision_result
+
         audit.log(
             "pipeline_complete",
             fields_total=len(self.schema.fields),
             fields_extracted=sum(1 for v in validated_fields.values() if v is not None),
             needs_review=len(review_fields) > 0 or len(warnings) > 0,
+            extraction_path="text",
+        )
+        audit.finalize()
+
+        # Refresh audit log on the text result (finalize may freeze it)
+        text_result.audit_log = audit.to_dict()
+        text_result.warnings = list(warnings)
+        return text_result
+
+
+    def _maybe_run_vision_fallback(
+        self,
+        *,
+        path: Path,
+        parsed_text: str,
+        text_result: ExtractionResult,
+        audit: AuditLog,
+        warnings: list[dict],
+        source_ref: dict,
+        pii_entities: list[dict],
+    ) -> ExtractionResult | None:
+        """Evaluate the fallback callback and, if True, run vision extraction.
+
+        Returns a new ExtractionResult on successful vision run, or None
+        to signal "no fallback happened, return the text result".
+
+        On any failure (callback exception, render failure, extraction
+        failure), this method appends a vision_fallback_failed warning
+        to `warnings` (mutating the text_result's warnings list in place
+        via the shared reference), logs the appropriate audit event, and
+        returns None so the caller returns the text result.
+        """
+        assert self.vision_extractor is not None
+
+        callback = self.vision_fallback_when or (lambda r: r.needs_review)
+
+        # Evaluate callback
+        try:
+            should_fire = callback(text_result)
+        except Exception as e:
+            audit.log(
+                "vision_fallback_callback_error",
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
+            warnings.append(
+                {
+                    "code": "vision_fallback_failed",
+                    "reason": "callback",
+                    "message": f"vision_fallback_when callback raised: {e}",
+                }
+            )
+            return None
+
+        if not should_fire:
+            return None
+
+        audit.log(
+            "vision_fallback_triggered",
+            provisional_needs_review=text_result.needs_review,
+            provisional_warning_codes=[w["code"] for w in text_result.warnings],
+        )
+
+        # Render pages
+        try:
+            dpi = getattr(self.vision_extractor, "dpi", 200)
+            audit.log("vision_render_start", dpi=dpi, path=str(path))
+            images = render_pages(path, dpi=dpi)
+            audit.log(
+                "vision_render_complete",
+                page_count=len(images),
+                total_bytes=sum(len(i) for i in images),
+            )
+        except Exception as e:
+            audit.log(
+                "vision_render_failed",
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
+            warnings.append(
+                {
+                    "code": "vision_fallback_failed",
+                    "reason": "render",
+                    "message": f"render_pages failed: {e}",
+                }
+            )
+            return None
+
+        # Run vision extractor
+        try:
+            audit.log(
+                "vision_extraction_start",
+                model=getattr(self.vision_extractor, "model", "custom"),
+                page_count=len(images),
+            )
+            vision_output = self.vision_extractor.extract(
+                images, self.schema, text=parsed_text
+            )
+            audit.log(
+                "vision_extraction_complete",
+                fields_returned=len(vision_output.fields),
+            )
+        except Exception as e:
+            audit.log(
+                "vision_extraction_failed",
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
+            warnings.append(
+                {
+                    "code": "vision_fallback_failed",
+                    "reason": "extraction",
+                    "message": f"vision extractor raised: {e}",
+                }
+            )
+            return None
+
+        # Re-validate vision output through the same validator
+        v_validated, v_errors = self._validator.validate(
+            vision_output.fields, self.schema
+        )
+        if v_errors:
+            audit.log("vision_validation_errors", errors=v_errors)
+
+        # Build vision-path warnings (re-check required fields for the new result)
+        vision_warnings: list[dict] = []
+        required_field_names = {
+            f.name for f in self.schema.fields if f.required
+        }
+        v_missing = sorted(
+            fname
+            for fname in required_field_names
+            if v_validated.get(fname) is None
+        )
+        if v_missing:
+            vision_warnings.append(
+                {
+                    "code": "required_fields_missing",
+                    "message": (
+                        f"{len(v_missing)} required field(s) missing "
+                        f"after vision extraction: {', '.join(v_missing)}"
+                    ),
+                    "missing_fields": v_missing,
+                }
+            )
+            audit.log(
+                "required_fields_missing_warning",
+                count=len(v_missing),
+                fields=v_missing,
+                path="vision",
+            )
+
+        v_review_fields = [
+            {
+                "field": fname,
+                "confidence": vision_output.confidence.get(fname, 0.0),
+                "raw": v_validated.get(fname),
+            }
+            for fname in self.schema.field_names()
+            if vision_output.confidence.get(fname, 0.0) < self.review_threshold
+            and v_validated.get(fname) is not None
+        ]
+        if v_review_fields:
+            audit.log(
+                "review_flagged",
+                count=len(v_review_fields),
+                fields=[r["field"] for r in v_review_fields],
+                path="vision",
+            )
+
+        audit.log(
+            "pipeline_complete",
+            fields_total=len(self.schema.fields),
+            fields_extracted=sum(1 for v in v_validated.values() if v is not None),
+            needs_review=len(v_review_fields) > 0 or len(vision_warnings) > 0,
+            extraction_path="vision",
         )
         audit.finalize()
 
         return ExtractionResult(
-            fields=validated_fields,
-            confidence=extraction.confidence,
+            fields=v_validated,
+            confidence=vision_output.confidence,
             source_ref=source_ref,
             pii_entities=pii_entities,
             audit_log=audit.to_dict(),
-            review_fields=review_fields,
-            warnings=warnings,
+            review_fields=v_review_fields,
+            warnings=vision_warnings,
             review_threshold=self.review_threshold,
             document_path=str(path),
             schema_name=self.schema.name,
-            extractor_model=self._model_name,
+            extractor_model=getattr(
+                self.vision_extractor, "model", "custom-vision"
+            ),
+            extraction_path="vision",
         )
 
 

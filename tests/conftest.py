@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from finlit.extractors.base import BaseExtractor
+from finlit.extractors.base_vision import BaseVisionExtractor
 from finlit.parsers.docling_parser import ParsedDocument
 from finlit.schema import Schema
 
@@ -89,5 +90,71 @@ def high_confidence_t4_extractor() -> StubExtractor:
             "box_50_rpp_or_dpsp_registration": 0.0,
             "box_52_pension_adjustment": 0.99,
             "province_of_employment": 0.99,
+        },
+    )
+
+
+class StubVisionExtractor(BaseVisionExtractor):
+    """Deterministic vision extractor for tests — zero network.
+
+    Records call count, last images, and last text hint so integration
+    tests can assert on what the pipeline passed in.
+    """
+
+    def __init__(
+        self,
+        fields: dict[str, Any] | None = None,
+        confidence: dict[str, float] | None = None,
+        notes: str = "",
+        raises: Exception | None = None,
+    ):
+        self._fields = fields or {}
+        self._confidence = confidence or {}
+        self._notes = notes
+        self._raises = raises
+        self.call_count = 0
+        self.last_images: list[bytes] | None = None
+        self.last_text: str | None = None
+
+    def extract(self, images, schema, text=""):
+        self.call_count += 1
+        self.last_images = images
+        self.last_text = text
+        if self._raises is not None:
+            raise self._raises
+        return _StubExtractionOutput(self._fields, self._confidence, self._notes)
+
+
+@pytest.fixture
+def high_confidence_vision_t5_extractor() -> StubVisionExtractor:
+    """Vision stub that returns a fully-populated, high-confidence T5."""
+    return StubVisionExtractor(
+        fields={
+            "payer_name": "Bank of Canada",
+            "recipient_sin": "123-456-789",
+            "tax_year": 2024,
+            "box_10_actual_amount_dividends_other_than_eligible": 1000.00,
+            "box_11_taxable_amount_dividends_other_than_eligible": 1150.00,
+            "box_12_dividend_tax_credit_other_than_eligible": 104.14,
+            "box_13_interest_from_canadian_sources": 250.00,
+            "box_14_other_income_from_canadian_sources": 0.0,
+            "box_18_capital_gains_dividends": 0.0,
+            "box_24_actual_amount_of_eligible_dividends": 500.00,
+            "box_25_taxable_amount_of_eligible_dividends": 690.00,
+            "box_26_dividend_tax_credit_eligible": 103.27,
+        },
+        confidence={
+            "payer_name": 0.98,
+            "recipient_sin": 0.99,
+            "tax_year": 0.99,
+            "box_10_actual_amount_dividends_other_than_eligible": 0.96,
+            "box_11_taxable_amount_dividends_other_than_eligible": 0.96,
+            "box_12_dividend_tax_credit_other_than_eligible": 0.94,
+            "box_13_interest_from_canadian_sources": 0.95,
+            "box_14_other_income_from_canadian_sources": 0.99,
+            "box_18_capital_gains_dividends": 0.99,
+            "box_24_actual_amount_of_eligible_dividends": 0.96,
+            "box_25_taxable_amount_of_eligible_dividends": 0.96,
+            "box_26_dividend_tax_credit_eligible": 0.94,
         },
     )
