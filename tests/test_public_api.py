@@ -32,4 +32,23 @@ def test_all_exports_restricted():
         "Field",
         "ExtractionResult",
         "schemas",
+        "VisionExtractor",
+        "BaseVisionExtractor",
     }
+
+
+def test_public_api_exports_vision_extractor():
+    assert hasattr(finlit, "VisionExtractor")
+    assert hasattr(finlit, "BaseVisionExtractor")
+    assert "VisionExtractor" in finlit.__all__
+    assert "BaseVisionExtractor" in finlit.__all__
+
+
+def test_can_import_vision_extractor_from_top_level():
+    from finlit import BaseVisionExtractor, VisionExtractor
+
+    # Construct a default vision extractor (network is not touched here
+    # because the underlying pydantic-ai Agent is built lazily).
+    ve = VisionExtractor()
+    assert ve.model == "anthropic:claude-sonnet-4-6"
+    assert BaseVisionExtractor is not None
