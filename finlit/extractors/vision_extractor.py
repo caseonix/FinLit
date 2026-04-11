@@ -15,6 +15,7 @@ Non-multimodal models will fail at extraction time with a provider error.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from pydantic_ai import BinaryContent
@@ -51,6 +52,11 @@ class VisionExtractor(BaseVisionExtractor):
         *before* any LLM call. ``None`` (default) disables the cap.
     """
 
+    # Maximum characters of the text-path hint forwarded to the LLM in
+    # the prompt. Keeps token usage bounded when the text extractor
+    # produced a long but low-quality output.
+    _TEXT_HINT_MAX_CHARS: int = 4000
+
     def __init__(
         self,
         model: str = "anthropic:claude-sonnet-4-6",
@@ -66,17 +72,23 @@ class VisionExtractor(BaseVisionExtractor):
         # VisionExtractor() does not require an API key to be present.
         # Tests replace _agent with a fake before calling extract().
         self._agent: Any = None
+        # BatchPipeline submits pipeline.run() to a ThreadPoolExecutor
+        # with a shared VisionExtractor instance. Double-checked locking
+        # in _get_agent() prevents parallel Agent construction.
+        self._agent_lock = threading.Lock()
 
     def _get_agent(self) -> Any:
         """Return the pydantic-ai Agent, building it on first use."""
         if self._agent is None:
-            from pydantic_ai import Agent
+            with self._agent_lock:
+                if self._agent is None:
+                    from pydantic_ai import Agent
 
-            self._agent = Agent(
-                self.model,
-                output_type=ExtractionOutput,
-                system_prompt=self._system_prompt(),
-            )
+                    self._agent = Agent(
+                        self.model,
+                        output_type=ExtractionOutput,
+                        system_prompt=self._system_prompt(),
+                    )
         return self._agent
 
     def _system_prompt(self) -> str:
@@ -135,7 +147,7 @@ Rules:
             hint_section = (
                 "\n\nText path partial output (may be incomplete or wrong — "
                 "prefer what you can see in the images):\n"
-                f"---\n{text_hint[:4000]}\n---\n"
+                f"---\n{text_hint[: self._TEXT_HINT_MAX_CHARS]}\n---\n"
             )
         return f"""Document type: {schema.document_type}
 

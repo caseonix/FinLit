@@ -7,6 +7,7 @@ import pytest
 from finlit import schemas
 from finlit.extractors.base_vision import BaseVisionExtractor
 from finlit.extractors.pydantic_ai_extractor import ExtractionOutput
+from finlit.extractors.vision_extractor import VisionExtractor
 
 
 def test_base_vision_extractor_is_abstract():
@@ -39,8 +40,6 @@ def test_base_vision_extractor_subclass_with_extract_works():
 
 
 # ---------------- VisionExtractor tests ----------------
-
-from finlit.extractors.vision_extractor import VisionExtractor
 
 
 class _FakeRunResult:
@@ -156,3 +155,14 @@ def test_vision_extractor_max_pages_none_allows_unlimited():
 
     # Should not raise
     ve.extract([b"p1"] * 20, schemas.CRA_T5)
+
+
+def test_vision_extractor_max_pages_at_limit_succeeds():
+    """Exactly max_pages images should not raise — the cap is strictly
+    greater-than."""
+    ve = VisionExtractor(max_pages=2)
+    fake = _install_fake_agent(ve, ExtractionOutput(fields={}, confidence={}))
+
+    ve.extract([b"p1", b"p2"], schemas.CRA_T5)
+
+    assert fake.call_count == 1
