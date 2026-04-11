@@ -471,6 +471,6 @@ Apache 2.0. See [LICENSE](LICENSE).
 
 ---
 
-Built by [Caseonix](https://caseonix.com) · Waterloo, Ontario 🍁
+Built by [Caseonix](https://caseonix.ca) · Waterloo, Ontario 🍁
 
-*FinLit is the extraction engine inside [LocalMind Sovereign](https://caseonix.com/localmind), Caseonix's document intelligence platform for Canadian regulated industries.*
+*FinLit is the extraction engine inside [LocalMind Sovereign](https://localmind.caseonix.ca), Caseonix's document intelligence platform for Canadian regulated industries.*
