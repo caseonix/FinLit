@@ -311,9 +311,9 @@ class DocumentPipeline:
 
         # Render pages
         try:
-            _dpi = getattr(self.vision_extractor, "dpi", 200)
-            audit.log("vision_render_start", dpi=_dpi, path=str(path))
-            images = render_pages(path, dpi=_dpi)
+            dpi = getattr(self.vision_extractor, "dpi", 200)
+            audit.log("vision_render_start", dpi=dpi, path=str(path))
+            images = render_pages(path, dpi=dpi)
             audit.log(
                 "vision_render_complete",
                 page_count=len(images),

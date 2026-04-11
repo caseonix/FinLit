@@ -596,6 +596,11 @@ def test_vision_audit_trail_complete(
         "vision_extraction_start",
         "vision_extraction_complete",
     ]
-    # All five must appear, in this order
-    indices = [events.index(ev) for ev in required_in_order]
-    assert indices == sorted(indices)
+    # All five must appear in this exact relative order. Walk the event
+    # stream once with a single cursor so duplicates or out-of-order
+    # occurrences cannot be masked by events.index() returning the first hit.
+    it = iter(events)
+    for expected in required_in_order:
+        assert any(e == expected for e in it), (
+            f"missing or out-of-order audit event {expected!r} in {events}"
+        )
