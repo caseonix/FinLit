@@ -76,6 +76,7 @@ class FinLitLoader(BaseLoader):
                     _log.warning(
                         "FinLit extraction failed for %s: %s", path, exc
                     )
+                    self.last_results.append(None)
                     continue
                 # on_error == "include"
                 _log.warning(

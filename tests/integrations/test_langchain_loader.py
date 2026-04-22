@@ -237,3 +237,45 @@ def test_audit_log_included_when_flag_set(
     assert "finlit_audit_log" in doc.metadata
     events = {e["event"] for e in doc.metadata["finlit_audit_log"]}
     assert "pipeline_complete" in events
+
+
+def test_last_results_includes_none_for_skipped_failures(
+    t4_pipeline, patch_docling_parser, tmp_path, monkeypatch
+):
+    """In skip mode, last_results gets a None placeholder so indices
+    align with the input path list. Yielded docs are still only the
+    successes — the user pairs them with paths via last_results."""
+    from finlit.integrations.langchain import FinLitLoader
+    from finlit.result import ExtractionResult
+
+    p1 = tmp_path / "ok1.pdf"; p1.write_bytes(b"x")
+    p2 = tmp_path / "boom.pdf"; p2.write_bytes(b"x")
+    p3 = tmp_path / "ok2.pdf"; p3.write_bytes(b"x")
+
+    original_run = t4_pipeline.run
+
+    def _run(path):
+        if Path(path).name == "boom.pdf":
+            raise RuntimeError("kaboom")
+        return original_run(path)
+
+    monkeypatch.setattr(t4_pipeline, "run", _run)
+
+    loader = FinLitLoader([p1, p2, p3], pipeline=t4_pipeline, on_error="skip")
+    _ = loader.load()
+
+    assert len(loader.last_results) == 3
+    assert isinstance(loader.last_results[0], ExtractionResult)
+    assert loader.last_results[1] is None
+    assert isinstance(loader.last_results[2], ExtractionResult)
+
+
+def test_last_results_resets_on_each_load(
+    t4_pipeline, patch_docling_parser, fake_t4_pdf
+):
+    from finlit.integrations.langchain import FinLitLoader
+
+    loader = FinLitLoader(fake_t4_pdf, pipeline=t4_pipeline)
+    loader.load()
+    loader.load()  # second call
+    assert len(loader.last_results) == 1  # not 2
