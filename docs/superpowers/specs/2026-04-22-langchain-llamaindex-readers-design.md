@@ -28,9 +28,12 @@ Ship **LangChain first** as v0.1 of this feature. LlamaIndex is a planned follow
 ### 4.1 Module location
 
 ```
-finlit/integrations/langchain/
-├── __init__.py    # exports FinLitLoader
-└── loader.py      # FinLitLoader implementation
+finlit/integrations/
+├── __init__.py               # namespace only
+├── _schema_resolver.py       # shared _resolve_schema() helper
+└── langchain/
+    ├── __init__.py           # exports FinLitLoader (with extras-install guard)
+    └── loader.py             # FinLitLoader implementation
 ```
 
 Import:
@@ -63,7 +66,7 @@ class FinLitLoader(BaseLoader):
 ### 4.3 Construction rules
 
 - **Pipeline wins.** If `pipeline` is provided, `schema` and `extractor` are ignored. Otherwise the loader constructs `DocumentPipeline(schema=<resolved>, extractor=extractor)` once in `__init__` and reuses it across every path.
-- **Schema resolution.** `schema` accepts three forms: a `Schema` object, a dotted registry key (`"cra.t4"`, `"banking.bank_statement"`), or the Python registry name (`"CRA_T4"`). Resolution lives in `_resolve_schema()` — a private helper kept separate so the future LlamaIndex reader can share it.
+- **Schema resolution.** `schema` accepts three forms: a `Schema` object, a dotted registry key (`"cra.t4"`, `"banking.bank_statement"`), or the Python registry name (`"CRA_T4"`). Resolution lives in `finlit/integrations/_schema_resolver.py` as a module-private `_resolve_schema()` helper. It sits one level above `langchain/` so the future LlamaIndex reader imports it without cross-framework coupling (`from finlit.integrations._schema_resolver import _resolve_schema`).
 - **Fail fast.** If neither `schema` nor `pipeline` is provided, `__init__` raises `ValueError("Pass either schema=... or pipeline=...")`. No deferred failure at `load()` time.
 - **Path normalization.** `file_path` is coerced to `list[Path]` in `__init__`. A single path becomes a one-element list. The `lazy_load` loop operates on one shape only.
 
@@ -132,7 +135,7 @@ metadata = {
 
 ### 5.4 Sidecar access
 
-`loader.last_results: list[ExtractionResult]` is populated as extractions complete. This gives power users access to the original `ExtractionResult` objects (identical order to the yielded Documents) without having to reconstruct anything from metadata. Reset on each call to `lazy_load` / `load`.
+`loader.last_results: list[ExtractionResult]` is populated as extractions complete. This gives power users access to the original `ExtractionResult` objects (identical order to the yielded Documents) without having to reconstruct anything from metadata. The list is cleared to `[]` at the start of every `lazy_load()` call; `load()` delegates to `lazy_load()` so it inherits the same reset. Failed paths (in `"skip"` or `"include"` mode) append `None` at the matching index so that `zip(docs, loader.last_results)` remains aligned.
 
 ## 6. Error handling
 
@@ -145,6 +148,8 @@ The `on_error` parameter controls per-path behavior inside the `lazy_load` loop:
 | `"include"` | Yield `Document(page_content="", metadata={"source": str(path), "finlit_error": repr(exc), "finlit_error_type": type(exc).__name__})`, continue |
 
 No automatic retries. Retry logic is a caller concern.
+
+**Note on empty `page_content`:** in `"include"` mode the failure Document has `page_content=""`. Some embedding models reject zero-length input. Downstream code that feeds these Documents into an embedder must filter on `metadata.get("finlit_error")` (or on truthy `page_content`) before embedding. This is documented in the README example and is the caller's responsibility — FinLit's job is not to silently drop the file, it is to surface the failure with enough information to recover.
 
 **Why `"include"` exists:** in a PIPEDA/audit context, silently dropping files from a batch is a compliance hazard. `"include"` lets callers see every input they submitted, distinguish failures from successes, and write their own recovery loop. It pairs naturally with `finlit_needs_review` for downstream triage.
 
@@ -164,7 +169,7 @@ Install path: `pip install finlit[langchain]`.
 
 **Why `langchain-core` and not `langchain`:** `BaseLoader` and `Document` live in `langchain-core`. Depending on the full `langchain` package drags in retrievers, chains, and community integrations we do not need, and forces our users into LangChain's release cadence on unrelated modules. `langchain-core` is the stable, narrow surface every LangChain user already has installed.
 
-**Version pin rationale:** `langchain-core>=0.3.0` — the 0.3 line finalized the `BaseLoader.lazy_load` contract we rely on and is the minimum version supported by the current `langchain-community` ecosystem. No upper bound; we track their breaking changes on the normal open-source cadence.
+**Version pin rationale:** `>=0.3.0` is a conservative, modern floor. The exact minimum should be verified at implementation time against the `BaseLoader` / `Document` symbols we import — if those are stable back to earlier releases, the floor can be lowered. No upper bound; we track breaking changes on the normal open-source cadence.
 
 **Import guard:** `loader.py` imports `langchain_core.documents.Document` and `langchain_core.document_loaders.BaseLoader` at module top. If `langchain-core` is not installed, Python's `ImportError` fires at `from finlit.integrations.langchain import FinLitLoader` time. We catch it in `finlit/integrations/langchain/__init__.py` and re-raise with:
 
@@ -200,7 +205,7 @@ Test fixtures live in `tests/integrations/` and reuse `tests/fixtures/sample_t4.
 
 ## 9. Documentation updates
 
-- Flip `- [ ] LangChain and LlamaIndex reader integrations` in `README.md:454` to a partial-completion split: `- [x] LangChain reader integration (v0.4)` and `- [ ] LlamaIndex reader integration`.
+- Flip `- [ ] LangChain and LlamaIndex reader integrations` in `README.md:454` to a partial-completion split: `- [x] LangChain reader integration` and `- [ ] LlamaIndex reader integration`. Version tag (e.g. `(v0.4)`) to be added by whoever cuts the release, not hardcoded in the PR.
 - Add a "LangChain integration" subsection to the README's Usage section with the one-liner and the sidecar `last_results` example.
 - Add `examples/langchain_rag.py` — end-to-end: load T4 PDFs, split, embed with OpenAI, query a Chroma store, filter by `finlit_fields.box_14_employment_income > 50000`.
 
