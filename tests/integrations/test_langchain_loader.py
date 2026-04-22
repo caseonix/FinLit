@@ -213,3 +213,27 @@ def test_on_error_include_emits_failure_document(
     assert failure.page_content == ""
     assert failure.metadata["finlit_error_type"] == "RuntimeError"
     assert "kaboom" in failure.metadata["finlit_error"]
+
+
+def test_audit_log_omitted_by_default(
+    t4_pipeline, patch_docling_parser, fake_t4_pdf
+):
+    from finlit.integrations.langchain import FinLitLoader
+
+    loader = FinLitLoader(fake_t4_pdf, pipeline=t4_pipeline)
+    doc = loader.load()[0]
+    assert "finlit_audit_log" not in doc.metadata
+
+
+def test_audit_log_included_when_flag_set(
+    t4_pipeline, patch_docling_parser, fake_t4_pdf
+):
+    from finlit.integrations.langchain import FinLitLoader
+
+    loader = FinLitLoader(
+        fake_t4_pdf, pipeline=t4_pipeline, include_audit_log=True
+    )
+    doc = loader.load()[0]
+    assert "finlit_audit_log" in doc.metadata
+    events = {e["event"] for e in doc.metadata["finlit_audit_log"]}
+    assert "pipeline_complete" in events

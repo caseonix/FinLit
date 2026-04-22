@@ -35,6 +35,7 @@ class FinLitLoader(BaseLoader):
         extractor: str | BaseExtractor = "claude",
         pipeline: DocumentPipeline | None = None,
         on_error: OnError = "raise",
+        include_audit_log: bool = False,
     ) -> None:
         if isinstance(file_path, (str, Path)):
             self._paths: list[Path] = [Path(file_path)]
@@ -58,6 +59,7 @@ class FinLitLoader(BaseLoader):
                 f"on_error must be 'raise', 'skip', or 'include', got {on_error!r}"
             )
         self._on_error = on_error
+        self._include_audit_log = include_audit_log
 
         self.last_results: list[ExtractionResult | None] = []
 
@@ -92,26 +94,31 @@ class FinLitLoader(BaseLoader):
                 )
                 continue
             self.last_results.append(result)
-            yield _build_document(path, parsed.full_text, result)
+            yield _build_document(
+                path, parsed.full_text, result, self._include_audit_log
+            )
 
 
 def _build_document(
-    path: Path, full_text: str, result: ExtractionResult
+    path: Path,
+    full_text: str,
+    result: ExtractionResult,
+    include_audit_log: bool,
 ) -> Document:
-    return Document(
-        page_content=full_text,
-        metadata={
-            "source": str(path),
-            "finlit_schema": result.schema_name,
-            "finlit_model": result.extractor_model,
-            "finlit_extraction_path": result.extraction_path,
-            "finlit_needs_review": result.needs_review,
-            "finlit_extracted_field_count": result.extracted_field_count,
-            "finlit_fields": dict(result.fields),
-            "finlit_confidence": dict(result.confidence),
-            "finlit_source_ref": dict(result.source_ref),
-            "finlit_warnings": list(result.warnings),
-            "finlit_review_fields": list(result.review_fields),
-            "finlit_pii_entities": list(result.pii_entities),
-        },
-    )
+    metadata: dict = {
+        "source": str(path),
+        "finlit_schema": result.schema_name,
+        "finlit_model": result.extractor_model,
+        "finlit_extraction_path": result.extraction_path,
+        "finlit_needs_review": result.needs_review,
+        "finlit_extracted_field_count": result.extracted_field_count,
+        "finlit_fields": dict(result.fields),
+        "finlit_confidence": dict(result.confidence),
+        "finlit_source_ref": dict(result.source_ref),
+        "finlit_warnings": list(result.warnings),
+        "finlit_review_fields": list(result.review_fields),
+        "finlit_pii_entities": list(result.pii_entities),
+    }
+    if include_audit_log:
+        metadata["finlit_audit_log"] = list(result.audit_log)
+    return Document(page_content=full_text, metadata=metadata)
