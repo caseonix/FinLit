@@ -243,6 +243,44 @@ Common warning codes:
 | `vision_fallback_failed` | Vision path was attempted and failed; text result retained |
 | `pii_detected` | Presidio found PII entities in the source text |
 
+### LangChain integration
+
+FinLit ships a LangChain `BaseLoader` so you can drop extracted Canadian
+financial documents straight into RAG pipelines, retrievers, and agents.
+
+Install the extra:
+
+```bash
+pip install finlit[langchain]
+```
+
+Load one file:
+
+```python
+from finlit.integrations.langchain import FinLitLoader
+
+docs = FinLitLoader("t4.pdf", schema="cra.t4").load()
+doc = docs[0]
+print(doc.metadata["finlit_fields"]["employer_name"])      # "Acme Corp"
+print(doc.metadata["finlit_needs_review"])                  # False
+```
+
+Batch load with compliance-friendly error surfacing:
+
+```python
+loader = FinLitLoader(
+    ["t4_001.pdf", "t4_002.pdf", "t4_003.pdf"],
+    schema="cra.t4",
+    on_error="include",  # failures become Documents with finlit_error
+)
+docs = loader.load()
+# Filter out failures before embedding — empty page_content breaks most embedders.
+good = [d for d in docs if not d.metadata.get("finlit_error")]
+```
+
+Access the underlying `ExtractionResult` objects via `loader.last_results`
+(same order as the input paths, with `None` for skipped/included failures).
+
 ---
 
 ## CLI
@@ -451,7 +489,8 @@ Schema contributions are the most useful PRs this project gets. If you know the 
 - [ ] SEDAR filing schemas (MD&A, AIF, financial statements)
 - [ ] Bank statement schemas (RBC, TD, Scotiabank, BMO, CIBC)
 - [ ] Accuracy benchmarks per schema
-- [ ] LangChain and LlamaIndex reader integrations
+- [x] LangChain reader integration
+- [ ] LlamaIndex reader integration
 - [ ] MCP tool definitions for agentic workflows
 - [ ] French CRA form support
 
