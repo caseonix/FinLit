@@ -126,5 +126,35 @@ def schema_list():
     console.print(table)
 
 
+mcp_app = typer.Typer(name="mcp", help="MCP server commands")
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.command("serve")
+def mcp_serve(
+    extractor: str = typer.Option("claude", help="Default text extractor for the server"),
+    vision_extractor: str = typer.Option(
+        None, "--vision-extractor", help="Optional default vision extractor"
+    ),
+    review_threshold: float = typer.Option(
+        0.85, help="Confidence threshold below which fields are flagged"
+    ),
+    pii_mode: str = typer.Option(
+        "redact", help="PII default: 'redact' (recommended) or 'raw'"
+    ),
+):
+    """Run the FinLit MCP server over stdio."""
+    if pii_mode not in ("redact", "raw"):
+        console.print(f"[red]--pii-mode must be 'redact' or 'raw', got {pii_mode!r}[/red]")
+        raise typer.Exit(1)
+    from finlit.integrations.mcp.server import serve
+    serve(
+        extractor=extractor,
+        vision_extractor=vision_extractor,
+        review_threshold=review_threshold,
+        pii_mode=pii_mode,  # type: ignore[arg-type]
+    )
+
+
 if __name__ == "__main__":
     app()

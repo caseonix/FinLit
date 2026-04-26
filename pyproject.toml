@@ -34,6 +34,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "ruff", "mypy"]
+langchain = ["langchain-core>=0.3.0"]
+mcp = ["mcp>=1.0"]
 
 [project.scripts]
 finlit = "finlit.cli.main:app"
