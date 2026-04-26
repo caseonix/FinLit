@@ -10,6 +10,7 @@ The module exposes:
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
 
@@ -94,6 +95,79 @@ def build_app(
             include_source_ref=include_source_ref,
             include_pii_entities=include_pii_entities,
         )
+
+    @app.tool()
+    async def batch_extract(
+        paths: list[str],
+        schema: str,
+        extractor_override: str | None = None,
+        vision_extractor_override: str | None = None,
+        redact_pii: bool | None = None,
+        on_error: Literal["raise", "skip", "include"] = "raise",
+        max_workers: int | None = None,
+        include_audit_log: bool = False,
+        include_source_ref: bool = False,
+        include_pii_entities: bool = False,
+    ) -> dict:
+        """Extract from many documents in parallel; returns aligned results + errors."""
+        if on_error not in ("raise", "skip", "include"):
+            raise ValueError(
+                f"on_error must be 'raise', 'skip', or 'include', got {on_error!r}"
+            )
+
+        doc_paths = [Path(p) for p in paths]
+        for i, p in enumerate(doc_paths):
+            if not p.exists():
+                raise ValueError(f"paths[{i}] does not exist: {p}")
+
+        chosen_extractor = extractor_override or extractor
+        chosen_vision = (
+            vision_extractor_override
+            if vision_extractor_override is not None
+            else vision_extractor
+        )
+        effective_redact = (
+            redact_pii if redact_pii is not None else server_default_redact
+        )
+
+        pipeline = get_pipeline(
+            chosen_extractor, chosen_vision, schema, review_threshold,
+        )
+        workers = max_workers if max_workers is not None else 4
+
+        def _run(path: Path):
+            return pipeline.run(path)
+
+        results: list[dict | None] = [None] * len(doc_paths)
+        errors: list[dict] = []
+
+        def _do_batch():
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_run, p): (i, p) for i, p in enumerate(doc_paths)}
+                for fut in futures:
+                    i, p = futures[fut]
+                    try:
+                        result = fut.result()
+                    except Exception as e:
+                        if on_error == "raise":
+                            raise
+                        errors.append({"path": str(p), "error": str(e), "stage": "extract"})
+                        # leave results[i] as None for both skip and include
+                        continue
+                    results[i] = build_extraction_response(
+                        result=result, schema=pipeline.schema, schema_key=schema,
+                        document_path=str(p.resolve()), redact=effective_redact,
+                        include_audit_log=include_audit_log,
+                        include_source_ref=include_source_ref,
+                        include_pii_entities=include_pii_entities,
+                    )
+
+        await asyncio.to_thread(_do_batch)
+
+        if on_error == "skip":
+            results = [r for r in results if r is not None]
+
+        return {"results": results, "errors": errors}
 
     # Stash config on the app for downstream tools added in later tasks.
     app._finlit_extractor = extractor                # type: ignore[attr-defined]
