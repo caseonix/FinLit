@@ -16,6 +16,7 @@ from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 
+from finlit.audit.pii import CanadianPIIDetector
 from finlit.integrations._schema_resolver import _DOTTED_TO_ATTR, _resolve_schema
 from finlit.integrations.mcp.pipeline_cache import get_pipeline
 from finlit.integrations.mcp.responses import build_extraction_response
@@ -168,6 +169,21 @@ def build_app(
             results = [r for r in results if r is not None]
 
         return {"results": results, "errors": errors}
+
+    # Built once per server, reused across tool calls. Presidio is heavy.
+    pii_detector = CanadianPIIDetector()
+
+    @app.tool()
+    def detect_pii(text: str, return_redacted: bool = False) -> dict:
+        """Detect Canadian + standard PII in arbitrary text. No LLM, no pipeline."""
+        if return_redacted:
+            redacted = pii_detector.redact(text)
+            return {
+                "entities": redacted.detected_entities,
+                "redacted_text": redacted.redacted_text,
+            }
+        entities = pii_detector.analyze(text)
+        return {"entities": entities, "redacted_text": None}
 
     # Stash config on the app for downstream tools added in later tasks.
     app._finlit_extractor = extractor                # type: ignore[attr-defined]
