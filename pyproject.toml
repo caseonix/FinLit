@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "finlit"
-version = "0.1.0"
+version = "0.4.0"
 description = "Canadian Financial Document Intelligence Framework"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -13,10 +13,16 @@ keywords = ["canada", "finance", "document", "extraction", "ai", "compliance"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
     "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: General",
 ]
 
 dependencies = [
@@ -39,6 +45,14 @@ mcp = ["mcp>=1.0"]
 
 [project.scripts]
 finlit = "finlit.cli.main:app"
+
+[project.urls]
+Homepage = "https://github.com/caseonix/FinLit"
+Repository = "https://github.com/caseonix/FinLit"
+Documentation = "https://github.com/caseonix/FinLit#readme"
+Quickstart = "https://github.com/caseonix/FinLit/blob/main/docs/quickstart.md"
+Issues = "https://github.com/caseonix/FinLit/issues"
+Changelog = "https://github.com/caseonix/FinLit/blob/main/README.md#roadmap"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -6,7 +6,7 @@ from finlit.pipeline import BatchPipeline, DocumentPipeline
 from finlit.result import ExtractionResult
 from finlit.schema import Field, Schema
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "DocumentPipeline",
