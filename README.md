@@ -32,10 +32,13 @@ print(result.needs_review)                           # → False
 
 Not a developer? See [docs/use-cases.md](docs/use-cases.md) for business context, compliance framing, and "build vs. buy" math.
 
+> **In a hurry?** Read the **[5-minute Quickstart](docs/quickstart.md)** — install, pick a backend, extract your first T4. Come back here when you need the reference.
+
 ---
 
 ## Contents
 
+- [Quickstart](docs/quickstart.md)
 - [Why FinLit](#why-finlit)
 - [Setup](#setup)
 - [Usage](#usage)
